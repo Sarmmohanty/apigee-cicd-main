@@ -1,0 +1,42 @@
+name: rM-APIGEE-Connector-Pipeline
+run-name: ${{ github.triggering_actor }} ran pipeline for APIGEE Connector deployment.
+on:
+  workflow_call:
+jobs:
+  Notify_On_Slack_for_approval:
+    uses: ./.github/workflows/Notify-On-Slack.yml
+    with:
+      workflow_status: Awaiting for Reviewer Approval
+    secrets: inherit
+  
+  Call_Dev_Reusable_workflow:
+    needs: Notify_On_Slack_for_approval
+    if: github.base_ref == 'development'
+    uses: ./.github/workflows/Connectors-Deploy.yml
+    with:
+      apigee-environment: development
+    secrets: inherit    
+
+  Call_Staging_Reusable_workflow:
+    needs: Notify_On_Slack_for_approval
+    if: github.base_ref == 'staging'
+    uses: ./.github/workflows/Connectors-Deploy.yml
+    with:
+      apigee-environment: staging
+    secrets: inherit
+
+  Call_Production_Reusable_workflow:
+    needs: Notify_On_Slack_for_approval
+    if: github.base_ref == 'production'
+    uses: ./.github/workflows/Connectors-Deploy.yml
+    with:
+      apigee-environment: production
+    secrets: inherit
+  
+  Notify_Workflow_Status_On_Slack:
+    if: always()
+    needs: [Call_Staging_Reusable_workflow, Call_Production_Reusable_workflow, Call_Dev_Reusable_workflow ]
+    uses: ./.github/workflows/Notify-On-Slack.yml
+    with:
+      workflow_status: ${{needs.Call_Dev_Reusable_workflow.outputs.step-status}}${{needs.Call_Production_Reusable_workflow.outputs.step-status}}${{ needs.Call_Staging_Reusable_workflow.outputs.step-status }}
+    secrets: inherit

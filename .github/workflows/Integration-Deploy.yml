@@ -1,0 +1,146 @@
+name: rM-APIGEE-Integration-Deploy
+run-name: ${{ github.actor }} ran pipeline for APIGEE resources deployment.
+on:
+    workflow_call:
+      inputs:
+        apigee-environment:
+          type: string
+          required: true
+          description: 'To Get APIGEE environment to deploy proxy'
+      outputs:
+        job-status: 
+          value: ${{ jobs.Deploy-Integration-To-APIGEE.result}}
+        step-status:
+          value: ${{ jobs.Deploy-Integration-To-APIGEE.outputs.step-status}}
+jobs:
+    Deploy-Integration-To-APIGEE:
+        runs-on: ubuntu-latest
+        permissions:
+          contents: 'read'
+          id-token: 'write'
+        environment: ${{ inputs.apigee-environment }}
+        outputs:
+          step-status: ${{ steps.publish-on-apigee.conclusion }}
+          
+        steps:
+            - name: Check out repository code
+              uses: actions/checkout@v3
+
+            - name: Authenticate with GCP using WFI
+              id: 'auth'
+              uses: 'google-github-actions/auth@v1'
+              with:
+                workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+                service_account: ${{ vars.SERVICE_ACCOUNT }}
+                token_format: 'access_token'
+      
+            - name: Install IntegrationCLI
+              run: |
+                curl -L https://raw.githubusercontent.com/GoogleCloudPlatform/application-integration-management-toolkit/main/downloadLatest.sh | sh -
+                echo "/home/runner/.integrationcli/bin" >> $GITHUB_PATH
+            
+            - name: Get Authprofiles
+              id: auth-profiles
+              run: |               
+                file_name=$(ls integration)
+                cd integration
+                auth_profile_exist="false"
+
+                if grep -q "authConfigId" $file_name;
+                then
+                  cd ..
+                  file_auth_profile_list=$(ls authProfiles)
+                  cd authProfiles
+                  auth_profile_display_names=$(jq -r '.displayName[]' $file_auth_profile_list)
+                  
+                  auth_profile_display_names_array=()
+                  while IFS= read -r line; do
+                    auth_profile_display_names_array+=( "$line" )
+                  done <<< $auth_profile_display_names
+                  cd ..
+                  cd integration
+                  jq -r '.taskConfigs[]|.parameters.authConfig.value.jsonValue|select(. !=null)' $file_name > jq_output.json
+                  authConfigId=$(jq -r '.authConfigId' jq_output.json)
+                  
+                  auth_profile_id_array=()
+                  while IFS= read -r line; do
+                    auth_profile_id_array+=( "$line" )
+                  done <<< $authConfigId
+                  
+                  array_index=0
+                  for AuthProfileName in "${auth_profile_display_names_array[@]}"; do
+                    echo "Names from authprofile file: $AuthProfileName"
+                    prsnt_auth_profile_id=$(integrationcli authconfigs get -t=${{ steps.auth.outputs.access_token}} -p=${{ vars.GCP_PROJECT }} -r=${{ vars.GCP_REGION }} -n=$AuthProfileName|jq -r .name|awk -F"/authConfigs/" '{print $2}')
+                    echo "auth profile ids from apigee environment: $prsnt_auth_profile_id"
+                    if [ $prsnt_auth_profile_id ]; then
+                      for AuthProfileID in "${auth_profile_id_array[@]}"; do
+                        echo "IDs from Integration file: $AuthProfileID"
+                        auth_profile_exist="true"
+                        if [ $AuthProfileID == $prsnt_auth_profile_id ]; then 
+                          echo "Auth profile is present in ${{ vars.GCP_PROJECT }}"
+                        else
+                          echo "Before Changes ---- ---- ----"
+                          cat $file_name|grep "authConfigId"                                                                      
+                          sed -i "s/$AuthProfileID/$prsnt_auth_profile_id/g" "$file_name"
+                          echo "After Changes ---- ---- ----"
+                          cat $file_name|grep "authConfigId"
+                          unset "auth_profile_id_array[$array_index]"
+                          array_index=$(($array_index+1));
+                          echo "$auth_profile_id_array[$array_index]"
+                          break
+                        fi
+                      done
+                    else
+                      echo "Auth profile is not present in ${{ vars.GCP_PROJECT }}"
+                      auth_profile_exist="false"
+                    fi
+                  done      
+                else
+                  auth_profile_exist="true"
+                  echo "Auth profile is not used for this Integration."
+                fi
+                echo "Value of Boolean Variable: $auth_profile_exist"
+                echo "env_auth_profile_exist=$auth_profile_exist" >> "$GITHUB_OUTPUT"
+            - name: Deploy APIGEE Integration
+              if: steps.auth-profiles.outputs.env_auth_profile_exist == 'true'
+              id: deploy-on-apigee
+              run :  |
+                integration_name=$(cat integration/*.json|jq -r .name| awk -F"/integrations/" '{print $2}' | awk -F"/versions" '{print $1}')
+                file_name=$(ls integration)
+                echo "env_integration_name=$integration_name" >> "$GITHUB_ENV"
+                integrationcli integrations create -t=${{ steps.auth.outputs.access_token}} -p=${{ vars.GCP_PROJECT }} -r=${{ vars.GCP_REGION }} -f=integration/$file_name -n=$integration_name -o=overrides/${{ inputs.apigee-environment }}-overrides.json > deploy_output.txt
+                cat deploy_output.txt
+                snap_shot_number=$(cat deploy_output.txt|jq -r .snapshotNumber)
+                #echo "integrationcli integrations create -t=${{ steps.auth.outputs.access_token}} -p=${{ vars.GCP_PROJECT }} -r=${{ vars.GCP_REGION }} -f=integration/$file_name -n=$integration_name"
+                echo "New snap shot number is $snap_shot_number"
+                echo "env_snap_shot_number=$snap_shot_number" >> "$GITHUB_ENV"
+            
+            - name: Get Active version
+              if: steps.deploy-on-apigee.outcome == 'success'
+              id: get-active-version
+              run: |
+                active_snapshot_number=$(integrationcli integrations versions list -t=${{ steps.auth.outputs.access_token}} -p=${{ vars.GCP_PROJECT }} -r=${{ vars.GCP_REGION }} -n=$env_integration_name -b|jq -r '.integrationVersions[] | select(.state == "ACTIVE") | .snapshotNumber')
+                echo "env_active_snapshot_number=$active_snapshot_number" >> "$GITHUB_ENV"
+                echo "Active snapshot number is: $active_snapshot_number"
+            
+            - name: Publish APIGEE Integration
+              if: steps.deploy-on-apigee.conclusion == 'success' && steps.auth-profiles.outputs.env_auth_profile_exist == 'true'
+              id: publish-on-apigee
+              run: |
+                integrationcli integrations versions publish -t=${{ steps.auth.outputs.access_token}} -p=${{ vars.GCP_PROJECT }} -r=${{ vars.GCP_REGION }} -n=$env_integration_name -s=$env_snap_shot_number
+            
+            - name: Undeploy the changes
+              id: undeploy-changes
+              if: always() && steps.publish-on-apigee.outcome == 'failure' || steps.auth-profiles.outputs.env_auth_profile_exist == 'false'
+              run: |
+                if [ $env_snap_shot_number ]
+                then
+                  #integrationcli integrations versions publish -t=${{ steps.auth.outputs.access_token}} -p=${{ vars.GCP_PROJECT }} -r=${{ vars.GCP_REGION }} -n=$env_integration_name -s=$env_active_snapshot_number
+                  integrationcli integrations versions delete -t=${{ steps.auth.outputs.access_token}} -p=${{ vars.GCP_PROJECT }} -r=${{ vars.GCP_REGION }} -n=$env_integration_name -s=$env_snap_shot_number
+                  echo "### Integration deployment failed and deleted the $env_integration_name:$env_snap_shot_number" >> $GITHUB_STEP_SUMMARY
+                fi
+
+            - name: Failing workflow if publish is skipped
+              if: steps.publish-on-apigee.conclusion == 'skipped'
+              run: |
+                exit 1

@@ -1,0 +1,116 @@
+name: rM-APIGEE-SharedFlow-CICD-Pipeline
+run-name: ${{ github.actor }} ran pipeline for APIGEE Shared flow deployment.
+on:
+  workflow_call:
+jobs:
+  Code_Analysis:
+    runs-on: ubuntu-latest
+    if: github.base_ref == 'development'
+    env:
+      SSH_PRIVATE_KEY: ${{ secrets.GA_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Code Analysis on APIGEE Proxy
+        id: code_analysis_proxy
+        run: |
+          npm install -g apigeelint
+          ls -l
+          echo "Running code analysis apigee proxy ....."
+          mkdir ${{ github.run_id }}_code_Analysis_output
+          apigeelint -s ./sharedflowbundle/ -e PO013,PO028 -f html.js  > ${{ github.run_id }}_code_Analysis_output/apigeelint-output.html
+
+      - name: Upload apigeelint result file
+        if: always() && steps.code_analysis_proxy.outcome != 'skipped'
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ github.run_id }}_code_Analysis_output
+          path: ${{ github.run_id }}_code_Analysis_output/apigeelint-output.html
+      
+      - name: Retrieve the secret and decode
+        id: retrieve-key
+        run: |
+          decoded_key=$(echo "$SSH_PRIVATE_KEY"|openssl enc -base64 -A -d)
+          delimiter="$(openssl rand -hex 8)"
+          echo "GA_SSH_PRIVATE_KEY_DECODED<<${delimiter}" >> "${GITHUB_OUTPUT}"
+          echo "$decoded_key" >> "${GITHUB_OUTPUT}"
+          echo "${delimiter}" >> "${GITHUB_OUTPUT}"
+      
+      - name: check out config files
+        uses: actions/checkout@v3
+        with:
+          repository: reMarkable/apigee-cicd
+          ref: 'main'
+          path: './config-files'
+          ssh-key: ${{ steps.retrieve-key.outputs.GA_SSH_PRIVATE_KEY_DECODED }}
+      
+      - name: Copy package.json
+        run: |
+          ls -l
+          cp ./config-files/./package.json $GITHUB_WORKSPACE
+          cp ./config-files/./.eslintrc.yml $GITHUB_WORKSPACE
+
+      - name: Code Analysis on APIGEE JS files
+        id: code_analysis_js
+        if: always()
+        run: |
+          folder_path="./sharedflowbundle/resources/jsc"
+
+          if [ -d "$folder_path" ]; then
+            npm install
+            echo "Running code analysis apigee javascript files ....."
+            npx eslint --version
+            npx eslint --format html $folder_path  > ${{ github.run_id }}_code_Analysis_output/eslintrc-output.html
+          else
+              echo "The JS folder does not exist." > ${{ github.run_id }}_code_Analysis_output/eslintrc-output.html
+          fi   
+      
+      - name: Upload Eslint result file
+        if: always() && steps.code_analysis_js.outcome != 'skipped'
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ github.run_id }}_code_Analysis_output
+          path: ${{ github.run_id }}_code_Analysis_output/eslintrc-output.html
+
+  Notify_On_Slack_for_approval:
+    needs: Code_Analysis
+    if: always()
+    uses: ./.github/workflows/Notify-On-Slack.yml
+    with:
+      workflow_status: Awaiting for Reviewer Approval
+    secrets: inherit
+  
+  Call_Dev_Reusable_workflow:
+    needs: Notify_On_Slack_for_approval
+    if: github.base_ref == 'development'
+    uses: ./.github/workflows/SharedFlow-Deploy.yml
+    with:
+      apigee-environment: development
+    secrets: inherit    
+  
+  Call_Staging_Reusable_workflow:
+    needs: Notify_On_Slack_for_approval
+    if: always() && github.base_ref == 'staging'
+    uses: ./.github/workflows/SharedFlow-Deploy.yml
+    with:
+        apigee-environment: staging
+    secrets: inherit
+
+  Call_Production_Reusable_workflow:
+    needs: Notify_On_Slack_for_approval
+    if: always() && github.base_ref == 'production'
+    uses: ./.github/workflows/SharedFlow-Deploy.yml
+    with:
+        apigee-environment: production
+    secrets: inherit
+
+  Notify_Workflow_Status_On_Slack:
+    if: always()
+    needs: [ Code_Analysis, Call_Dev_Reusable_workflow, Call_Staging_Reusable_workflow, Call_Production_Reusable_workflow ]
+    uses: ./.github/workflows/Notify-On-Slack.yml
+    with:
+      workflow_status: "Code Analysis: ${{ needs.Code_Analysis.result }} Deployment: ${{ needs.Call_Dev_Reusable_workflow.outputs.job-status }}${{ needs.Call_Production_Reusable_workflow.outputs.job-status }}${{ needs.Call_Staging_Reusable_workflow.outputs.job-status }}"
+    secrets: inherit

@@ -1,0 +1,69 @@
+name: rM-APIGEE-Target-Servers-Deploy
+on:
+  workflow_call:
+    inputs:
+      apigee-environment:
+        type: string
+        required: true
+        description: 'To Get APIGEE environment to deploy Target Servers'
+    outputs:
+      job-status: 
+        value: ${{ jobs.Deploy-Target-Servers-To-APIGEE.result }}
+      step-status:
+        value: ${{ jobs.Deploy-Target-Servers-To-APIGEE.outputs.step-status }}
+jobs:
+    Deploy-Target-Servers-To-APIGEE:
+        runs-on: ubuntu-latest
+        environment: ${{ inputs.apigee-environment }}
+        permissions:
+          contents: 'read'
+          id-token: 'write'
+        outputs:
+          step-status: ${{ steps.deploy-target-servers-values.outcome }}
+        steps:
+            - name: Check out repository code
+              uses: actions/checkout@v4
+
+            - name: Authenticate with GCP using WFI
+              id: 'auth'
+              uses: 'google-github-actions/auth@v1'
+              with:
+                workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+                service_account: ${{ vars.SERVICE_ACCOUNT }}
+                token_format: 'access_token'
+      
+            - name: Install APIGEECLI
+              run: |
+                npm version
+                curl -L https://raw.githubusercontent.com/apigee/apigeecli/main/downloadLatest.sh | sh -
+                echo "/home/runner/.apigeecli/bin" >> $GITHUB_PATH
+        
+            - name: deploy Target Servers
+              id: deploy-target-servers-values
+              run: |
+                if [ ${{ inputs.apigee-environment }} == "development" ]
+                then
+                  file_name=$(ls development-target-servers)
+                  cd development-target-servers
+                  apigeecli targetservers import -e=${{ vars.APIGEE_ENVIRONMENT }} -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -f=$file_name
+                  echo "Available Target servers in ${{ vars.APIGEE_ENVIRONMENT }}"
+                  apigeecli targetservers list -e=${{ vars.APIGEE_ENVIRONMENT }} -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }}           
+                fi
+
+                if [ ${{ inputs.apigee-environment }} == "staging" ]
+                then
+                  file_name=$(ls staging-target-servers)
+                  cd staging-target-servers
+                  apigeecli targetservers import -e=${{ vars.APIGEE_ENVIRONMENT }} -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -f=$file_name
+                  echo "Available Target servers in ${{ vars.APIGEE_ENVIRONMENT }}"
+                  apigeecli targetservers list -e=${{ vars.APIGEE_ENVIRONMENT }} -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }}            
+                fi
+
+                if [ ${{ inputs.apigee-environment }} == "production" ]
+                then
+                  file_name=$(ls production-target-servers)
+                  cd production-target-servers
+                  apigeecli targetservers import -e=${{ vars.APIGEE_ENVIRONMENT }} -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -f=$file_name
+                  echo "Available Target servers in ${{ vars.APIGEE_ENVIRONMENT }}"
+                  apigeecli targetservers list -e=${{ vars.APIGEE_ENVIRONMENT }} -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }}            
+                fi

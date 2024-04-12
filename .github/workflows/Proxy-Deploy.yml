@@ -1,0 +1,88 @@
+name: rM-APIGEE-Proxy-Deploy
+run-name: ${{ github.actor }} ran pipeline for APIGEE resources deployment.
+on:
+    workflow_call:
+      inputs:
+        apigee-environment:
+          type: string
+          required: true
+          description: 'To Get APIGEE environment to deploy proxy'
+      outputs:
+        job-status: 
+          value: ${{ jobs.Deploy-To-APIGEE.result }}
+        step-status:
+          value: ${{ jobs.Deploy-To-APIGEE.outputs.step-status }}
+        acting-env:
+          value: ${{ inputs.apigee-environment }}
+        stable-ver-status:
+          value: ${{ jobs.Deploy-To-APIGEE.outputs.stable-ver-status }}
+jobs:
+    Deploy-To-APIGEE:
+        runs-on: ubuntu-latest
+        permissions:
+          contents: 'read'
+          id-token: 'write'
+        environment: ${{ inputs.apigee-environment }}
+        outputs:
+          step-status: ${{ steps.publish-on-apigee.outcome }}
+          stable-ver-status: ${{ steps.get-stable-version.outcome }}
+        steps:
+            - name: Check out repository code
+              uses: actions/checkout@v3
+
+            - name: Authenticate with GCP using WFI
+              id: 'auth'
+              uses: 'google-github-actions/auth@v1'
+              with:
+                workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+                service_account: ${{ vars.SERVICE_ACCOUNT }}
+                token_format: 'access_token'
+      
+            - name: Install APIGEECLI
+              run: |
+                npm version
+                curl -L https://raw.githubusercontent.com/apigee/apigeecli/main/downloadLatest.sh | sh -
+                echo "/home/runner/.apigeecli/bin" >> $GITHUB_PATH
+
+            - name: Deploy APIGEE Proxy
+              id: deploy-on-apigee
+              run : |
+                file_name=$(ls apiproxy/*.xml)
+                
+                proxy_name=$(basename $file_name .xml)
+                echo "env_proxy_name=$proxy_name" >> "$GITHUB_ENV"
+                
+                revision_number=$(apigeecli apis create bundle -n=$proxy_name -f=./apiproxy -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }}|jq -r .revision)
+                echo "env_revision_number=$revision_number" >> "$GITHUB_ENV"
+            
+            - name: Get Stable version
+              id: get-stable-version
+              if: always() && steps.deploy-on-apigee.outcome == 'success'
+              run: |
+                stable_revision=$(apigeecli apis listdeploy -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -n=$env_proxy_name);
+                if [[ -n "$stable_revision" && "$stable_revision" == "{}" ]]; then
+                  echo $env_revision_number > stable_version.txt
+                else
+                  p_stable_revision=$(echo $stable_revision|jq -r '.deployments[].revision');
+                  echo $p_stable_revision > stable_version.txt
+                fi
+                
+                echo "Deployed stable proxy Revision number is $stable_revision"
+                echo "Deployed active proxy Revision number is $env_revision_number"
+            
+            - name: Upload Version Artifact
+              uses: actions/upload-artifact@v4
+              with:
+               name: stable-version-artifact
+               path: stable_version.txt
+            
+            - name: Publish APIGEE Proxy
+              id: publish-on-apigee
+              if: steps.deploy-on-apigee.outcome == 'success'
+              run:  |
+                apigeecli apis deploy -e=${{ vars.APIGEE_ENVIRONMENT }} -n=$env_proxy_name -v=$env_revision_number -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -s=${{ vars.SERVICE_ACCOUNT }} -r;
+          
+            - name: Failing workflow if publish is skipped
+              if: steps.publish-on-apigee.conclusion == 'skipped'
+              run: |
+                exit 1    

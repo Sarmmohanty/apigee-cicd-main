@@ -1,0 +1,105 @@
+name: rM-APIGEE-KVM-Deploy
+on:
+  workflow_call:
+    inputs:
+      apigee-environment:
+        type: string
+        required: true
+        description: 'To Get APIGEE environment to deploy KVM Values'
+    outputs:
+      job-status: 
+        value: ${{ jobs.Deploy-KVM-To-APIGEE.result }}
+      step-status:
+        value: ${{ jobs.Deploy-KVM-To-APIGEE.outputs.step-status }}
+jobs:
+    Deploy-KVM-To-APIGEE:
+        runs-on: ubuntu-latest
+        environment: ${{ inputs.apigee-environment }}
+        permissions:
+          contents: 'read'
+          id-token: 'write'
+        outputs:
+          step-status: ${{ steps.deploy-kvm-values.outcome }}
+        steps:
+            - name: Check out repository code
+              uses: actions/checkout@v4
+
+            - name: Authenticate with GCP using WFI
+              id: 'auth'
+              uses: 'google-github-actions/auth@v1'
+              with:
+                workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+                service_account: ${{ vars.SERVICE_ACCOUNT }}
+                token_format: 'access_token'
+      
+            - name: Install APIGEECLI
+              run: |
+                npm version
+                curl -L https://raw.githubusercontent.com/apigee/apigeecli/main/downloadLatest.sh | sh -
+                echo "/home/runner/.apigeecli/bin" >> $GITHUB_PATH
+        
+            - name: deploy KVM entries
+              id: deploy-kvm-values
+              run: |
+                deploy_kvm()
+                {
+                  delete_kvm_list=()
+                  for entry in $(cat $file_name | jq -c '.[]'); do
+                    name=$(echo "$entry" | jq -r '.name')
+                    echo "KVM Map Name: $name"
+                    set +e                   
+                    kvm_deploy_status=$(apigeecli kvms create -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -e=${{ vars.APIGEE_ENVIRONMENT }} -n=$name)                                                           
+                    if [[ ! $kvm_deploy_status ]];
+                    then                     
+                      apigeecli kvms delete -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -e=${{ vars.APIGEE_ENVIRONMENT }} -n=$name
+                      delete_kvm_list+=($name)
+                    else                 
+                      entry_array=$(echo "$entry" | jq -c '.entry[]')                 
+                      while read -r line; do
+                          entry_name=$(echo "$line" | jq -r '.name')
+                          entry_value=$(echo "$line" | jq -r '.value')
+                          echo "KVM Entry Name: $entry_name, KVM Entry Value: $entry_value"
+                          apigeecli kvms entries create -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -e=${{ vars.APIGEE_ENVIRONMENT }} -m=$name -k=$entry_name -l=$entry_value
+                      done <<< "$entry_array"
+                    fi
+                  done
+
+                  for kvm_name in "${delete_kvm_list[@]}"; do
+                    echo "Deleted kvms list in array $kvm_name"
+                    for entry in $(cat $file_name | jq -c '.[]'); do
+                      del_kvm_name=$(echo "$entry" | jq -r '.name')
+                      if [ $kvm_name ==  $del_kvm_name ];
+                      then
+                        echo "Condition: $kvm_name ==  $del_kvm_name "
+                        apigeecli kvms create -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -e=${{ vars.APIGEE_ENVIRONMENT }} -n=$kvm_name
+                        entry_array=$(echo "$entry" | jq -c '.entry[]')                 
+                        while read -r line; do
+                          entry_name=$(echo "$line" | jq -r '.name')
+                          entry_value=$(echo "$line" | jq -r '.value')
+                          echo "KVM Entry Name: $entry_name, KVM Entry Value: $entry_value"
+                          apigeecli kvms entries create -t=${{ steps.auth.outputs.access_token}} -o=${{ vars.GCP_PROJECT }} -e=${{ vars.APIGEE_ENVIRONMENT }} -m=$kvm_name -k=$entry_name -l=$entry_value
+                        done <<< "$entry_array"
+                      fi
+                      done
+                  done
+                }
+                if [ ${{ inputs.apigee-environment }} == "development" ]
+                then
+                  file_name=$(ls development-kvm-values)
+                  cd development-kvm-values
+                  deploy_kvm                  
+                fi
+                
+                if [ ${{ inputs.apigee-environment }} == "staging" ]
+                then
+                  file_name=$(ls staging-kvm-values)
+                  cd staging-kvm-values
+                  deploy_kvm
+                fi
+
+                if [ ${{ inputs.apigee-environment }} == "production" ]
+                then
+                  file_name=$(ls production-kvm-values)
+                  cd production-kvm-values
+                  deploy_kvm
+                fi

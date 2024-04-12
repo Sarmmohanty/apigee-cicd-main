@@ -1,0 +1,380 @@
+name: rM-Github-CICD-Manual-REPO-Creator
+run-name: ${{ github.triggering_actor }} ran pipeline to create cicd repository.
+on:
+    workflow_dispatch:
+        inputs:
+            Component_Type:
+              description: 'Please select APIGEE component type to create repository.'     
+              required: true
+              type: choice
+              options:
+                - API Proxy
+                - API Product
+                - Connectors
+                - Integration
+                - KVM Values
+                - Shared flows
+                - Target Servers
+            Component_Name:
+              description: 'Please enter component name to create repository.'
+              type: string
+            Component_Description:
+                description: 'Please enter description of repository'
+                required: true
+                default: 'A repo for APIGEE CICD pipeline'
+            PAT:
+              description: 'Please enter your personal access token'
+              type: string
+              required: true
+jobs:
+    Create_Repository_from_Template:
+        runs-on: ubuntu-latest
+        permissions: write-all
+        env:
+          owner_name: reMarkable
+          github_token: ${{ inputs.PAT }}
+          GA_SSH_Private_Key: ${{ secrets.GA_SSH_PRIVATE_KEY }}
+        outputs:
+          repo_url: ${{ steps.cicd-repo-creator.outputs.opt_repo_url }}
+        steps:
+            - name: Check out repository code
+              uses: actions/checkout@v4
+            - name: Creating Configuration Values for Repository
+              id: cicd-repo-config-creator
+              run: |
+                echo "${{ github.triggering_actor }} selected ${{ inputs.Component_Type }}"
+                if [ "${{ inputs.Component_Type }}" == "API Proxy" ]
+                then
+                  echo "repo_template=apigee-proxy-template" >> "$GITHUB_ENV"
+                  echo "repo_name=proxy-${{ inputs.Component_Name }}" >> "$GITHUB_ENV"
+                  echo "context_rule_value_development=Call_Proxy_Reusable_workflow / Call_Dev_Reusable_workflow / Deploy-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_Stage=Call_Proxy_Reusable_workflow / Call_Staging_Reusable_workflow / Deploy-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_production=Call_Proxy_Reusable_workflow / Call_Production_Reusable_workflow / Deploy-To-APIGEE" >> "$GITHUB_ENV"
+                elif [ "${{ inputs.Component_Type }}" == "API Product" ]
+                then
+                  echo "repo_template=apigee-product-template" >> "$GITHUB_ENV"
+                  echo "repo_name=product-${{ inputs.Component_Name }}" >> "$GITHUB_ENV"
+                  echo "context_rule_value_development=Call_Product_Reusable_workflow / Call_Dev_Reusable_workflow / Deploy-Product-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_Stage=Call_Product_Reusable_workflow / Call_Staging_Reusable_workflow / Deploy-Product-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_production=Call_Product_Reusable_workflow / Call_Production_Reusable_workflow / Deploy-Product-To-APIGEE" >> "$GITHUB_ENV"
+                elif [ "${{ inputs.Component_Type }}" == "Connectors" ]
+                then
+                  echo "repo_template=apigee-connectors-template" >> "$GITHUB_ENV"
+                  echo "repo_name=connector-${{ inputs.Component_Name }}" >> "$GITHUB_ENV"
+                  echo "context_rule_value_development=Call_Connector_Reusable_workflow / Call_Dev_Reusable_workflow / Deploy-Connector-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_Stage=Call_Connector_Reusable_workflow / Call_Staging_Reusable_workflow / Deploy-Connector-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_production=Call_Connector_Reusable_workflow / Call_Production_Reusable_workflow / Deploy-Connector-To-APIGEE" >> "$GITHUB_ENV"
+                elif [ "${{ inputs.Component_Type }}" == "Integration" ]
+                then
+                  echo "repo_template=apigee-integration-template" >> "$GITHUB_ENV"
+                  echo "repo_name=integration-${{ inputs.Component_Name }}" >> "$GITHUB_ENV"
+                  echo "context_rule_value_development=Call_Integration_Reusable_workflow / Call_Dev_Reusable_workflow / Deploy-Integration-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_Stage=Call_Integration_Reusable_workflow / Call_Staging_Reusable_workflow / Deploy-Integration-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_production=Call_Integration_Reusable_workflow / Call_Production_Reusable_workflow / Deploy-Integration-To-APIGEE" >> "$GITHUB_ENV"
+                elif [ "${{ inputs.Component_Type }}" == "Shared flows" ]
+                then
+                  echo "repo_template=apigee-sharedflow-template" >> "$GITHUB_ENV"
+                  echo "repo_name=shared_flow-${{ inputs.Component_Name }}" >> "$GITHUB_ENV"
+                  echo "context_rule_value_development=Call_SharedFlow_Reusable_workflow / Call_Dev_Reusable_workflow / Deploy-SharedFlow-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_Stage=Call_SharedFlow_Reusable_workflow / Call_Staging_Reusable_workflow / Deploy-SharedFlow-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_production=Call_SharedFlow_Reusable_workflow / Call_Production_Reusable_workflow / Deploy-SharedFlow-To-APIGEE" >> "$GITHUB_ENV"
+                elif [ "${{ inputs.Component_Type }}" == "Target Servers" ] && [ ${{ inputs.Component_Name }} == "development" ] || [ ${{ inputs.Component_Name }} == "production" ] || [ ${{ inputs.Component_Name }} == "staging" ]
+                then
+                  echo "repo_template=apigee-target-servers-template" >> "$GITHUB_ENV"
+                  echo "repo_name=target-server-${{ inputs.Component_Name }}" >> "$GITHUB_ENV"
+                  echo "context_rule_value_development=Call_Target_Server_Reusable_workflow / Call_Dev_Reusable_workflow / Deploy-Target-Servers-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_Stage=Call_Target_Server_Reusable_workflow / Call_Staging_Reusable_workflow / Deploy-Target-Servers-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_production=Call_Target_Server_Reusable_workflow / Call_Production_Reusable_workflow / Deploy-Target-Servers-To-APIGEE" >> "$GITHUB_ENV"
+                elif [ "${{ inputs.Component_Type }}" == "KVM Values" ] && [ ${{ inputs.Component_Name }} == "development" ] || [ ${{ inputs.Component_Name }} == "production" ] || [ ${{ inputs.Component_Name }} == "staging" ]
+                then
+                  echo "repo_template=apigee-kvm-template" >> "$GITHUB_ENV"
+                  echo "repo_name=kvm-${{ inputs.Component_Name }}" >> "$GITHUB_ENV"
+                  echo "context_rule_value_development=Call_KVM_Reusable_workflow / Call_Dev_Reusable_workflow / Deploy-KVM-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_Stage=Call_KVM_Reusable_workflow / Call_Staging_Reusable_workflow / Deploy-KVM-To-APIGEE" >> "$GITHUB_ENV"
+                  echo "context_rule_value_production=Call_KVM_Reusable_workflow / Call_Production_Reusable_workflow / Deploy-KVM-To-APIGEE" >> "$GITHUB_ENV"
+                else
+                  echo "Valid_input=false" >> "$GITHUB_OUTPUT"
+                  if [ "${{ inputs.Component_Type }}" == "KVM Values" ] || [ "${{ inputs.Component_Type }}" == "Target Servers" ]
+                  then
+                    echo "### Sorry! We are unable to create repository for ${{ inputs.Component_Type }} because the given component name ${{ inputs.Component_Name }} is not an environment. Only development,production or staging allowed." >> $GITHUB_STEP_SUMMARY
+                  else
+                    echo "### :x: Wrong Component Type" >> $GITHUB_STEP_SUMMARY
+                  fi
+                fi
+            - name: Creating New Repository
+              if: inputs.PAT != '' && steps.cicd-repo-config-creator.outputs.Valid_input != 'false'
+              id: cicd-repo-creator
+              run: |
+                #creating-repo and storing path and id
+                echo "------Creating-repo and fetching path and id of new repo------"
+                echo "Owner name: $owner_name"
+                echo "Repo template: $repo_template"
+                echo "Repo name:$repo_name"
+                curl -X POST -H "Authorization:Bearer $github_token" -H "Accept:application/vnd.github+json" https://api.github.com/repos/$owner_name/$repo_template/generate -d '{"owner": "'$owner_name'","name": "'$repo_name'","description": "${{ inputs.Component_Description }}","include_all_branches": false,"private": true}' > create-repo-response.json
+                echo "repo_path=$(cat create-repo-response.json|jq -r .full_name)" >> "$GITHUB_ENV" 
+                echo "repo_id=$(cat create-repo-response.json|jq -r .id)" >> "$GITHUB_ENV"
+                echo "opt_repo_url=$(cat create-repo-response.json|jq -r .html_url)" >> $GITHUB_OUTPUT
+                cat create-repo-response.json        
+            - name: Adding Collaborators for Repository
+              if: success() && steps.cicd-repo-creator.outcome == 'success'
+              run: |
+                  #creating Repository collaborators
+                  echo "------Creating Repository Collaborators------"
+
+                  curl -L \
+                  -X PUT \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer $github_token" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  https://api.github.com/orgs/$owner_name/teams/systems-integrations/repos/$owner_name/$repo_name \
+                  -d '{"permission":"admin"}'
+
+                  curl -L \
+                  -X PUT \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer $github_token" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  https://api.github.com/orgs/$owner_name/teams/ops-it-consultants/repos/$owner_name/$repo_name \
+                  -d '{"permission":"push"}'
+            - name: Adding Environments for Repository
+              if: success() && steps.cicd-repo-creator.outcome == 'success' && inputs.Component_Type != 'KVM Values' && inputs.Component_Type != 'Target Servers'
+              run: |
+                  #creating environments along with protection rules
+                  echo "------Creating environments along with protection rules------"
+
+                  environments=("staging" "production" "development")
+
+                  for env in "${environments[@]}"; do
+                    curl -L \
+                      -X PUT \
+                      -H "Accept: application/vnd.github+json" \
+                      -H "Authorization: Bearer $github_token" \
+                      -H "X-GitHub-Api-Version: 2022-11-28" \
+                      https://api.github.com/repos/$repo_path/environments/$env \
+                      -d '{"wait_timer":0,"reviewers":[{"type":"Team","id":8359048}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+
+                    if [ $env == "development" ]
+                    then
+                      deployment_branch="feature-*"
+                    fi
+
+                    if [ $env == "staging" ]
+                    then
+                      deployment_branch="development"
+                    fi
+
+                    if [ $env == "production" ]
+                    then
+                      deployment_branch="staging"
+                    fi
+
+                    curl -L \
+                      -X POST \
+                      -H "Accept: application/vnd.github+json" \
+                      -H "Authorization: Bearer $github_token" \
+                      -H "X-GitHub-Api-Version: 2022-11-28" \
+                      https://api.github.com/repos/$repo_path/environments/$env/deployment-branch-policies \
+                      -d '{"name":"'$deployment_branch'"}'
+
+
+                    total_variables=$(jq -c '.variables[]' env-variables/env-variables-$env.json)
+
+                    while read -r var; do
+                        name=$(echo "$var" | jq -r '.name')
+                        value=$(echo "$var" | jq -r '.value')
+
+                      curl -L \
+                        -X POST \
+                        -H "Accept: application/vnd.github+json" \
+                        -H "Authorization: Bearer $github_token" \
+                        -H "X-GitHub-Api-Version: 2022-11-28" \
+                        https://api.github.com/repositories/$repo_id/environments/$env/variables \
+                        -d '{"name":"'$name'","value":"'$value'"}'
+
+                    done <<< "$total_variables"
+                  done       
+            - name: Renaming Main branch
+              if: success() && steps.cicd-repo-creator.outcome == 'success'  && inputs.Component_Type != 'KVM Values' && inputs.Component_Type != 'Target Servers'
+              run: |
+                  #Renaming main branch to production
+                  echo "------Renaming main branch to production------"
+
+                  curl -L \
+                      -X POST \
+                      -H "Accept: application/vnd.github+json" \
+                      -H "Authorization: Bearer $github_token" \
+                      -H "X-GitHub-Api-Version: 2022-11-28" \
+                      https://api.github.com/repos/$owner_name/$repo_name/branches/main/rename \
+                      -d '{"new_name":"production"}'
+                  
+                  sleep 10            
+            - name: Creating Branches for Repository
+              if: success() && steps.cicd-repo-creator.outcome == 'success' && inputs.Component_Type != 'KVM Values' && inputs.Component_Type != 'Target Servers' 
+              run: |
+                  #creating branches and branch protection rules
+                  echo "------Creating branches and branch protection rules------"
+
+                  branches=("staging" "development" "production");
+
+                  for bch in "${branches[@]}"; do
+
+                  sha_value=$(curl -L -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $github_token" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/repos/$repo_path/git/ref/heads/production | jq -r .object.sha)
+                  echo "sha value is :$sha_value"
+                  if [ $bch != "production" ]
+                  then
+                  curl -L \
+                    -X POST \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "Authorization: Bearer $github_token" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                    https://api.github.com/repos/$repo_path/git/refs \
+                    -d '{"ref": "refs/heads/'$bch'","sha": "'$sha_value'"}'
+                  fi
+
+                  if [ $bch == "development" ]
+                  then
+                  context_rule=$context_rule_value_development
+                  fi
+
+                  if [ $bch == "staging" ]
+                  then
+                  context_rule=$context_rule_value_Stage
+                  fi
+
+                  if [ $bch == "production" ]
+                  then
+                  context_rule=$context_rule_value_production
+                  fi
+
+                  if [ $bch != "development" ]
+                  then
+                    curl -L \
+                      -X PUT \
+                      -H "Accept: application/vnd.github+json" \
+                      -H "Authorization: Bearer $github_token" \
+                      -H "X-GitHub-Api-Version: 2022-11-28" \
+                      https://api.github.com/repos/$repo_path/branches/$bch/protection \
+                      -d '{"required_status_checks": {"strict": true,"contexts": ["'"$context_rule"'"]},"enforce_admins": true,"required_pull_request_reviews": {"required_approving_review_count": 1},"restrictions": null}'
+                  else
+                  #both data same for now, but need to update once dev is removed
+                    curl -L \
+                      -X PUT \
+                      -H "Accept: application/vnd.github+json" \
+                      -H "Authorization: Bearer $github_token" \
+                      -H "X-GitHub-Api-Version: 2022-11-28" \
+                      https://api.github.com/repos/$repo_path/branches/development/protection \
+                      -d '{"required_status_checks": {"strict": true,"contexts": ["'"$context_rule"'"]},"enforce_admins": true,"required_pull_request_reviews": {"required_approving_review_count": 1},"restrictions": null}'
+                  fi
+                  done              
+            - name: Creating Secrets for Repository
+              if: success() && steps.cicd-repo-creator.outcome == 'success'
+              run: |
+                  #Creating Repo secrets
+                  echo "--------------Creating secrets for repo-------------------"
+
+
+                  curl -L -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $github_token" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/repos/$owner_name/$repo_name/actions/secrets/public-key > repo_public_key.json
+                  cat repo_public_key.json
+
+                  repo_public_key=$(cat repo_public_key.json | jq -r .key)
+                  repo_public_key_id=$(cat repo_public_key.json | jq -r .key_id)
+
+                  echo "public key: $repo_public_key"
+                  echo "publick key id: $repo_public_key_id"
+
+                  npm install libsodium-wrappers
+                               
+                  encrypted_value_slack=$(node encrypt-secret.js ${{ secrets.SLACK_WEBHOOK_URL }} $repo_public_key)
+                  echo "Slack:$encrypted_value_slack"
+                  curl -L \
+                  -X PUT \
+                  -H "Accept: application/vnd.github+json"  \
+                  -H "Authorization: Bearer $github_token" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  https://api.github.com/repos/$owner_name/$repo_name/actions/secrets/SLACK_WEBHOOK_URL \
+                  -d '{"encrypted_value":"'$encrypted_value_slack'","key_id":"'$repo_public_key_id'"}'
+                  
+                  encrypted_value_ssh_private_key=$(node encrypt-secret.js $GA_SSH_Private_Key $repo_public_key)
+                  echo "SSH Key: $encrypted_value_ssh_private_key"
+                  curl -L \
+                    -X PUT \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "Authorization: Bearer $github_token" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                    https://api.github.com/repos/$owner_name/$repo_name/actions/secrets/GA_SSH_PRIVATE_KEY \
+                    -d '{"encrypted_value":"'$encrypted_value_ssh_private_key'","key_id":"'$repo_public_key_id'"}'
+            - name: Creating New Repository for KVM values Or Target Servers
+              env:
+                github_token: ${{ inputs.PAT }}
+              id: kvms-repo-creator
+              if: steps.cicd-repo-creator.outcome == 'success' && inputs.Component_Type == 'KVM Values' || inputs.Component_Type == 'Target Servers'
+              run: |
+                    #creating environments along with protection rules
+                    echo "------Creating environments along with protection rules------"
+
+                    environment_name=${{ inputs.Component_Name }}
+                      curl -L \
+                        -X PUT \
+                        -H "Accept: application/vnd.github+json" \
+                        -H "Authorization: Bearer $github_token" \
+                        -H "X-GitHub-Api-Version: 2022-11-28" \
+                        https://api.github.com/repos/$repo_path/environments/$environment_name \
+                        -d '{"wait_timer":0,"reviewers":[{"type":"Team","id":8359048}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+
+
+                    deployment_branch="feature-*"
+                      curl -L \
+                        -X POST \
+                        -H "Accept: application/vnd.github+json" \
+                        -H "Authorization: Bearer $github_token" \
+                        -H "X-GitHub-Api-Version: 2022-11-28" \
+                        https://api.github.com/repos/$repo_path/environments/$environment_name/deployment-branch-policies \
+                        -d '{"name":"'$deployment_branch'"}'
+
+
+                      total_variables=$(jq -c '.variables[]' env-variables/env-variables-$environment_name.json)
+
+                      while read -r var; do
+                          name=$(echo "$var" | jq -r '.name')
+                          value=$(echo "$var" | jq -r '.value')
+
+                        curl -L \
+                          -X POST \
+                          -H "Accept: application/vnd.github+json" \
+                          -H "Authorization: Bearer $github_token" \
+                          -H "X-GitHub-Api-Version: 2022-11-28" \
+                          https://api.github.com/repositories/$repo_id/environments/$environment_name/variables \
+                          -d '{"name":"'$name'","value":"'$value'"}'
+
+                      done <<< "$total_variables" 
+                      
+                      #creating branch protection rule
+                      echo "creating branch protection rule for KVMS"
+                      if [ $environment_name == "development" ]
+                      then
+                        context_rule=$context_rule_value_development
+                      fi
+
+                      if [ $environment_name == "staging" ]
+                      then
+                        context_rule=$context_rule_value_Stage
+                      fi
+
+                      if [ $environment_name == "production" ]
+                      then
+                        context_rule=$context_rule_value_production
+                      fi
+                      curl -L \
+                          -X PUT \
+                          -H "Accept: application/vnd.github+json" \
+                          -H "Authorization: Bearer $github_token" \
+                          -H "X-GitHub-Api-Version: 2022-11-28" \
+                          https://api.github.com/repos/$repo_path/branches/main/protection \
+                          -d '{"required_status_checks": {"strict": true,"contexts": ["'"$context_rule"'"]},"enforce_admins": true,"required_pull_request_reviews": {"required_approving_review_count": 1},"restrictions": null}'
+    Notify_Workflow_Status_On_Slack:
+      if: always()
+      needs: Create_Repository_from_Template
+      uses: ./.github/workflows/Notify-On-Slack.yml
+      with:
+        workflow_status: "Creation of new repository for ${{ inputs.Component_Type}} was ${{ needs.Create_Repository_from_Template.result }}. Repository URL: ${{ needs.Create_Repository_from_Template.outputs.repo_url }}"
+      secrets: inherit
